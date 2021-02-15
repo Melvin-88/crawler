@@ -3,8 +3,9 @@ import cheerio from "cheerio";
 
 const BASE_URL = process.argv.slice(2)[0];
 const SEARCH_TEXT = process.argv.slice(2)[1];
+const WEB_SITE_PAGE_DATA = [];
 
-const handleGetSiteBodyRequest = async (URL) => {
+const getSiteBodyRequest = async (URL) => {
      return new Promise(resolve => {
          request( URL,
              (error, response, body) => {
@@ -16,12 +17,15 @@ const handleGetSiteBodyRequest = async (URL) => {
     })
 }
 
-const handleGetWebSiteLinks = (body) => {
+const getWebSiteLinks = (body, url ) => {
     const baseUrl = BASE_URL.slice(-1) === "/" ? BASE_URL.slice(0, -1) : BASE_URL;
     const linksHref = [];
 
-    let $ = cheerio.load(body);
-    let links = $('a');
+    const $ = cheerio.load(body);
+    const bodyText = $('body').text();
+    const links = $('a');
+
+    findTextOnPage(bodyText, url);
 
     $(links).each(function(i, link){
         const href = $(link).attr('href');
@@ -40,11 +44,7 @@ const handleGetWebSiteLinks = (body) => {
     return linksHref;
 }
 
-const handleFindTextOnPage = async ( url ) => {
-    const siteBody = await handleGetSiteBodyRequest(url);
-
-    let $ = cheerio.load(siteBody);
-    const bodyText = $('body').text();
+const findTextOnPage = (bodyText, url ) => {
     const result = bodyText
         .replace(/[\x00-\x1F\x7F-\x9F]/g, " ")
         .split(" ")
@@ -63,18 +63,16 @@ const handleFindTextOnPage = async ( url ) => {
         }
     }
 
-    return { url, text: resultArr };
-}
+    const isExistRoute = WEB_SITE_PAGE_DATA.some((route)=> route.url === url)
 
-const handleSearchTextResult = async ( siteUrls ) => {
-    return Promise.allSettled(
-        siteUrls.map(( url ) => handleFindTextOnPage(url))
-    );
-}
+    if(!isExistRoute){
+        WEB_SITE_PAGE_DATA.push({ url, text: resultArr });
+    }
+};
 
-const handleStartCrawler = async (url, urlData = []) => {
-    const siteBody = await handleGetSiteBodyRequest(url);
-    const webSiteData = handleGetWebSiteLinks(siteBody, url);
+const startCrawler = async (url, urlData = []) => {
+    const siteBody = await getSiteBodyRequest(url);
+    const webSiteData = getWebSiteLinks(siteBody, url);
     const newLinksUrl = webSiteData.filter((url) => urlData.indexOf(url) === -1);
     const uniqueNewUrls = newLinksUrl.filter((item, pos, self) => ( self.indexOf(item) === pos ));
 
@@ -83,7 +81,7 @@ const handleStartCrawler = async (url, urlData = []) => {
     }else{
         const results = [];
         const arrOfResults = await Promise.allSettled(
-            uniqueNewUrls.map(( url ) => handleStartCrawler(url, [...urlData, ...uniqueNewUrls]))
+            uniqueNewUrls.map(( url ) => startCrawler(url, [...urlData, ...uniqueNewUrls]))
         );
 
         arrOfResults.forEach(({ value }) => {
@@ -99,14 +97,13 @@ const handleStartCrawler = async (url, urlData = []) => {
 }
 
 (async () => {
-    const allUrls = await handleStartCrawler(BASE_URL);
-    const searchTextResult = await handleSearchTextResult(allUrls);
-    const pageWithSearchText = searchTextResult.filter(({ value }) => value.text.length);
+    await startCrawler(BASE_URL);
+    const pageWithSearchText = WEB_SITE_PAGE_DATA.filter(({ text }) => text.length);
 
-    console.log(`Crawled ${allUrls.length} pages. Found ${pageWithSearchText.length} pages with the term ‘${SEARCH_TEXT}’:`)
+    console.log(`Crawled ${WEB_SITE_PAGE_DATA.length} pages. Found ${pageWithSearchText.length} pages with the term ‘${SEARCH_TEXT}’:`)
 
-    pageWithSearchText.forEach(({value}) => {
-        const message = `${value.url} => '${value.text.join(', ')}'`
-        console.log(message)
+    pageWithSearchText.forEach(({url, text}) => {
+        const message = `${url} => '${text.join(', ')}'`
+        console.log(message);
     })
 })();
